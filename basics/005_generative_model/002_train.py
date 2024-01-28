@@ -117,6 +117,19 @@ class MultiHeadAttention(nn.Module):
         return torch.cat([h(x) for h in self.heads], dim=-1)
 
 
+class FeedForward(nn.Module):
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.ffwd = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU(),
+        )
+    
+    def forward(self, x):
+        return self.ffwd(x)
+
+        
 class BigramLanguageModel(nn.Module):
 
     def __init__(self, vocab_size, block_size, n_embd, n_heads):
@@ -124,6 +137,7 @@ class BigramLanguageModel(nn.Module):
         self.tok_embedding = nn.Embedding(vocab_size, n_embd)
         self.pos_embedding = nn.Embedding(block_size, n_embd)
         self.sa_head = MultiHeadAttention(n_embd=n_embd, n_head_dim=n_embd // n_heads, n_heads=n_heads, block_size=block_size)
+        self.ff_head = FeedForward(n_embd=n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     @property
@@ -135,6 +149,7 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.pos_embedding(torch.arange(idx.shape[-1], device=self.device)) # T, C, (8) --> (8, 65)
         x = tok_emb + pos_emb # B, T, C, (4, 8, 65) --> (4, 8, 65) B is broad casted.
         x = self.sa_head(x)
+        x = self.ff_head(x)
         logits = self.lm_head(x) # B, T, C, (4, 8, 65) --> (4, 8, 65)
 
         if targets is not None:
@@ -190,6 +205,7 @@ m = BigramLanguageModel(
 m = m.to(device)
 print(m.device)
 print(m)
+print(f"Number of parameters: {sum(p.numel() for p in m.parameters())}")
 optimizer = torch.optim.AdamW(m.parameters(), lr=lr)
 
 # Training
