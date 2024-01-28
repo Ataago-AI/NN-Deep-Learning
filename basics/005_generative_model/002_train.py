@@ -12,13 +12,14 @@ split_ratio = 0.9
 # Model parameters
 block_size = 8          # chunk size
 n_embd = 32             # embedding size
-n_head_dim = 32         # attention head size
+n_heads = 4             # attention heads
 
 # Training parameters
 batch_size = 4
 eval_iters = 200
 eval_interval = 1000
-nu_epochs = 10000
+nu_epochs = 20_000
+lr = 1e-3
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 ####################
@@ -104,13 +105,25 @@ class AttentionHead(nn.Module):
         return out
     
 
+class MultiHeadAttention(nn.Module):
+
+    def __init__(self, n_embd, n_head_dim, n_heads=8, block_size=block_size):
+        super().__init__()
+        self.heads = nn.ModuleList([
+            AttentionHead(n_embd=n_embd, n_head_dim=n_head_dim, block_size=block_size) for _ in range(n_heads)
+        ])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size, block_size, n_embd, n_head_dim):
+    def __init__(self, vocab_size, block_size, n_embd, n_heads):
         super().__init__()
         self.tok_embedding = nn.Embedding(vocab_size, n_embd)
         self.pos_embedding = nn.Embedding(block_size, n_embd)
-        self.sa_head = AttentionHead(n_embd=n_embd, n_head_dim=n_head_dim, block_size=block_size)
+        self.sa_head = MultiHeadAttention(n_embd=n_embd, n_head_dim=n_embd // n_heads, n_heads=n_heads, block_size=block_size)
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     @property
@@ -172,12 +185,12 @@ m = BigramLanguageModel(
     vocab_size=vocab_size, 
     block_size=block_size, 
     n_embd=n_embd,
-    n_head_dim=n_head_dim,
+    n_heads=n_heads,
 )
 m = m.to(device)
 print(m.device)
 print(m)
-optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(m.parameters(), lr=lr)
 
 # Training
 print("Training")
