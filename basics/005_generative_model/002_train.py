@@ -112,18 +112,21 @@ class MultiHeadAttention(nn.Module):
         self.heads = nn.ModuleList([
             AttentionHead(n_embd=n_embd, n_head_dim=n_embd//n_heads, block_size=block_size) for _ in range(n_heads)
         ])
+        self.proj = nn.Linear(n_embd, n_embd)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
-
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        return out
 
 class FeedForward(nn.Module):
 
     def __init__(self, n_embd):
         super().__init__()
         self.ffwd = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, n_embd*4),
             nn.ReLU(),
+            nn.Linear(n_embd*4, n_embd),
         )
     
     def forward(self, x):
@@ -138,8 +141,8 @@ class Block(nn.Module):
         self.ff_head = FeedForward(n_embd=n_embd)
 
     def forward(self, x):
-        x = self.sa_heads(x)
-        x = self.ff_head(x)
+        x = x + self.sa_heads(x)
+        x = x + self.ff_head(x)
         return x
             
 class BigramLanguageModel(nn.Module):
