@@ -13,6 +13,7 @@ split_ratio = 0.9
 block_size = 8          # chunk size
 n_embd = 32             # embedding size
 n_heads = 4             # attention heads
+n_layers = 3            # transformer layers
 
 # Training parameters
 batch_size = 4
@@ -88,7 +89,6 @@ class AttentionHead(nn.Module):
         self.query = nn.Linear(n_embd, n_head_dim, bias=False)    # Key
         self.value = nn.Linear(n_embd, n_head_dim, bias=False)    # Value
         self.register_buffer('mask', torch.tril(torch.ones(block_size, block_size)))  # Lower Triangular matrix
-        print(self.mask.shape)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -107,10 +107,10 @@ class AttentionHead(nn.Module):
 
 class MultiHeadAttention(nn.Module):
 
-    def __init__(self, n_embd, n_head_dim, n_heads=8, block_size=block_size):
+    def __init__(self, n_embd, n_heads=8, block_size=block_size):
         super().__init__()
         self.heads = nn.ModuleList([
-            AttentionHead(n_embd=n_embd, n_head_dim=n_head_dim, block_size=block_size) for _ in range(n_heads)
+            AttentionHead(n_embd=n_embd, n_head_dim=n_embd//n_heads, block_size=block_size) for _ in range(n_heads)
         ])
 
     def forward(self, x):
@@ -129,15 +129,28 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.ffwd(x)
 
-        
+
+class Block(nn.Module):
+
+    def __init__(self, n_embd, n_heads, block_size=block_size):
+        super().__init__()
+        self.sa_heads = MultiHeadAttention(n_embd=n_embd, n_heads=n_heads, block_size=block_size)
+        self.ff_head = FeedForward(n_embd=n_embd)
+
+    def forward(self, x):
+        x = self.sa_heads(x)
+        x = self.ff_head(x)
+        return x
+            
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size, block_size, n_embd, n_heads):
+    def __init__(self, vocab_size, block_size, n_embd, n_heads, n_layers):
         super().__init__()
         self.tok_embedding = nn.Embedding(vocab_size, n_embd)
         self.pos_embedding = nn.Embedding(block_size, n_embd)
-        self.sa_head = MultiHeadAttention(n_embd=n_embd, n_head_dim=n_embd // n_heads, n_heads=n_heads, block_size=block_size)
-        self.ff_head = FeedForward(n_embd=n_embd)
+        self.blocks = nn.Sequential(
+            *[Block(n_embd=n_embd, n_heads=n_heads, block_size=block_size) for _ in range(n_layers)]
+        )
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     @property
@@ -148,8 +161,7 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.tok_embedding(idx) # B, T, C, (4, 8) --> (4, 8, 65)
         pos_emb = self.pos_embedding(torch.arange(idx.shape[-1], device=self.device)) # T, C, (8) --> (8, 65)
         x = tok_emb + pos_emb # B, T, C, (4, 8, 65) --> (4, 8, 65) B is broad casted.
-        x = self.sa_head(x)
-        x = self.ff_head(x)
+        x = self.blocks(x)
         logits = self.lm_head(x) # B, T, C, (4, 8, 65) --> (4, 8, 65)
 
         if targets is not None:
@@ -201,6 +213,7 @@ m = BigramLanguageModel(
     block_size=block_size, 
     n_embd=n_embd,
     n_heads=n_heads,
+    n_layers=n_layers,
 )
 m = m.to(device)
 print(m.device)
