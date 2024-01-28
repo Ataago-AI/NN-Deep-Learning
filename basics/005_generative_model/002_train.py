@@ -10,9 +10,9 @@ SEED = 1337
 split_ratio = 0.9
 
 # Model parameters
-block_size = 8  # chunk size
-n_embd = 32  # embedding size
-
+block_size = 8          # chunk size
+n_embd = 32             # embedding size
+n_head_dim = 32         # attention head size
 
 # Training parameters
 batch_size = 4
@@ -79,12 +79,38 @@ def loss_estimator(model, datasets):
     return out
 
 
+class AttentionHead(nn.Module):
+
+    def __init__(self, n_embd, n_head_dim, block_size=block_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, n_head_dim, bias=False)      # Query
+        self.query = nn.Linear(n_embd, n_head_dim, bias=False)    # Key
+        self.value = nn.Linear(n_embd, n_head_dim, bias=False)    # Value
+        self.register_buffer('mask', torch.tril(torch.ones(block_size, block_size)))  # Lower Triangular matrix
+        print(self.mask.shape)
+
+    def forward(self, x):
+        B, T, C = x.shape
+
+        k = self.key(x)                                      # B, T, C --> B, T, n_head_dim
+        q = self.query(x)                                    # B, T, C --> B, T, n_head_dim
+        v = self.value(x)                                    # B, T, C --> B, T, n_head_dim
+
+        wei = q @ k.transpose(-2, -1) * C**-0.5              # B, T, n_head_dim @ B, n_head_dim, T --> B, T, T
+
+        wei = wei.masked_fill(self.mask[:T, :T] == 0, float('-inf'))     # Mask out upper triangular matrix to -inf for softmax to return 0
+        wei = F.softmax(wei, dim=-1)                        # Softmax along rows, gives out same wei as version 2.
+        out = wei @ v                                     # B, T, T @ B, T, n_head_dim --> B, T, n_head_dim
+        return out
+    
+
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size, block_size, n_embd):
+    def __init__(self, vocab_size, block_size, n_embd, n_head_dim):
         super().__init__()
         self.tok_embedding = nn.Embedding(vocab_size, n_embd)
         self.pos_embedding = nn.Embedding(block_size, n_embd)
+        self.sa_head = AttentionHead(n_embd=n_embd, n_head_dim=n_head_dim, block_size=block_size)
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     @property
@@ -95,6 +121,7 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.tok_embedding(idx) # B, T, C, (4, 8) --> (4, 8, 65)
         pos_emb = self.pos_embedding(torch.arange(idx.shape[-1], device=self.device)) # T, C, (8) --> (8, 65)
         x = tok_emb + pos_emb # B, T, C, (4, 8, 65) --> (4, 8, 65) B is broad casted.
+        x = self.sa_head(x)
         logits = self.lm_head(x) # B, T, C, (4, 8, 65) --> (4, 8, 65)
 
         if targets is not None:
@@ -144,7 +171,8 @@ for t in range(1, block_size+1):
 m = BigramLanguageModel(
     vocab_size=vocab_size, 
     block_size=block_size, 
-    n_embd=n_embd
+    n_embd=n_embd,
+    n_head_dim=n_head_dim,
 )
 m = m.to(device)
 print(m.device)
@@ -169,6 +197,7 @@ for steps in tqdm(range(1, 1+nu_epochs), disable=True):
 
 out = loss_estimator(model=m, datasets={'train': train_data, 'val': val_data})
 print(f"Final metrics train_loss : {out['train']:.6f} | val_loss : {out['val']:.6f}")
+
 # Generate text
 gen_text = decode(m.generate(
     idx=torch.zeros((1, 1), dtype=torch.long, device=device), 
