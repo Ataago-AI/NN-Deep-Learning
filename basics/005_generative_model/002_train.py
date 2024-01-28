@@ -8,11 +8,18 @@ from tqdm.auto import tqdm
 ###### CONFIG ######
 SEED = 1337
 split_ratio = 0.9
+
+# Model parameters
 block_size = 8  # chunk size
+n_embd = 32  # embedding size
+
+
+# Training parameters
 batch_size = 4
 eval_iters = 200
 eval_interval = 1000
 nu_epochs = 10000
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 ####################
 
@@ -74,16 +81,21 @@ def loss_estimator(model, datasets):
 
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self, vocab_size, block_size, n_embd):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, vocab_size)
+        self.tok_embedding = nn.Embedding(vocab_size, n_embd)
+        self.pos_embedding = nn.Embedding(block_size, n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     @property
     def device(self):
-        return self.embedding.weight.device
+        return self.tok_embedding.weight.device
 
     def forward(self, idx, targets=None):
-        logits = self.embedding(idx) # B, T, C, (4, 8) --> (4, 8, 65)
+        tok_emb = self.tok_embedding(idx) # B, T, C, (4, 8) --> (4, 8, 65)
+        pos_emb = self.pos_embedding(torch.arange(idx.shape[-1], device=self.device)) # T, C, (8) --> (8, 65)
+        x = tok_emb + pos_emb # B, T, C, (4, 8, 65) --> (4, 8, 65) B is broad casted.
+        logits = self.lm_head(x) # B, T, C, (4, 8, 65) --> (4, 8, 65)
 
         if targets is not None:
             B, T, C = logits.shape
@@ -94,11 +106,12 @@ class BigramLanguageModel(nn.Module):
         
         return logits, None
     
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, block_size=block_size):
         
         for _ in range(max_new_tokens):
-            logits, _ = self(idx) # B, T, C
-            last_logits = logits[:, -1, :]  # B, -1, C --> B, C
+            idx_cond = idx[:, -block_size:]         # Trim to block size
+            logits, _ = self(idx_cond)              # B, T, C
+            last_logits = logits[:, -1, :]          # B, -1, C --> B, C
            
             probs = F.softmax(last_logits, dim=-1)  # B, C
             next_idx = torch.multinomial(probs, num_samples=1) # B, 1
@@ -128,7 +141,11 @@ for t in range(1, block_size+1):
 
 
 # Init model and optimizer
-m = BigramLanguageModel(vocab_size=vocab_size)
+m = BigramLanguageModel(
+    vocab_size=vocab_size, 
+    block_size=block_size, 
+    n_embd=n_embd
+)
 m = m.to(device)
 print(m.device)
 print(m)
